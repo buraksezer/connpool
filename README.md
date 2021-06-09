@@ -1,4 +1,4 @@
-# Pool [![GoDoc](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)](https://godoc.org/github.com/buraksezer/pool) [![Build Status](http://img.shields.io/travis/buraksezer/pool.svg?style=flat-square)](https://travis-ci.org/buraksezer/pool)
+# Pool [![Go Reference](https://pkg.go.dev/badge/github.com/buraksezer/pool.svg)](https://pkg.go.dev/github.com/buraksezer/pool) ![Tests](https://github.com/buraksezer/pool/actions/workflows/ci.yaml/badge.svg)
 
 
 Pool is a thread safe connection pool for net.Conn interface. It can be used to
