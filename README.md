@@ -14,7 +14,7 @@ go get github.com/buraksezer/pool
 ```
 
 Please vendor the package with one of the releases: https://github.com/buraksezer/pool/releases.
-`master` branch is **development** branch and will contain always the latest changes.
+`master` branch is **development** branch and will always contain the latest changes.
 
 
 ## Example
