@@ -12,7 +12,7 @@ var (
 )
 
 // Pool interface describes a pool implementation. A pool should have maximum
-// capacity. An ideal pool is threadsafe and easy to use.
+// capacity. An ideal pool is thread-safe and easy to use.
 type Pool interface {
 	// Get returns a new connection from the pool. Closing the connections puts
 	// it back to the Pool. Closing it when the pool is destroyed or full will
@@ -23,6 +23,9 @@ type Pool interface {
 	// no longer usable.
 	Close()
 
-	// Len returns the current number of connections of the pool.
+	// Len returns the current number of idle connections of the pool.
 	Len() int
+
+	// NumberOfConns returns the total number of alive connections of the pool.
+	NumberOfConns() int
 }

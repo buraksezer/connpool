@@ -5,6 +5,7 @@ import (
 	"math/rand"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -288,5 +289,85 @@ func simpleTCPServer() {
 			buffer := make([]byte, 256)
 			conn.Read(buffer)
 		}()
+	}
+}
+
+func TestPoolMaximumCapacity(t *testing.T) {
+	var successful int32
+	p, _ := NewChannelPool(InitialCap, MaximumCap, func() (net.Conn, error) {
+		return net.Dial(network, address)
+	})
+	defer p.Close()
+
+	var wg sync.WaitGroup
+	numWorkers := MaximumCap * 2
+	wg.Add(numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+
+				_, err := p.Get()
+				if err != nil {
+					t.Error(err)
+				}
+				atomic.AddInt32(&successful, 1)
+			}()
+
+			select {
+			case <-time.After(time.Second):
+			case <-done:
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	if atomic.LoadInt32(&successful) != int32(MaximumCap) {
+		t.Errorf("expected successfull Get calls: %d, got: %d", MaximumCap, successful)
+	}
+
+	if p.NumberOfConns() != MaximumCap {
+		t.Errorf("expected connection count %d, got %d", MaximumCap, p.NumberOfConns())
+	}
+}
+
+func TestPoolMaximumCapacity_Close(t *testing.T) {
+	var successfull int32
+	p, _ := NewChannelPool(InitialCap, MaximumCap, func() (net.Conn, error) {
+		return net.Dial(network, address)
+	})
+	defer p.Close()
+
+	var wg sync.WaitGroup
+	numWorkers := MaximumCap * 2
+	wg.Add(numWorkers)
+	for i := 0; i < numWorkers; i++ {
+		go func() {
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+
+				c, err := p.Get()
+				if err != nil {
+					t.Error(err)
+				}
+				atomic.AddInt32(&successfull, 1)
+				c.Close()
+			}()
+
+			select {
+			case <-time.After(time.Second):
+			case <-done:
+			}
+			wg.Done()
+		}()
+	}
+	wg.Wait()
+
+	if atomic.LoadInt32(&successfull) != int32(numWorkers) {
+		t.Errorf("expected successful Get calls: %d, got: %d",
+			numWorkers, atomic.LoadInt32(&successfull))
 	}
 }
