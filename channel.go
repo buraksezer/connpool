@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 )
 
 // channelPool implements the Pool interface based on buffered channels.
@@ -12,6 +13,10 @@ type channelPool struct {
 	// storage for our net.Conn connections
 	mu    sync.RWMutex
 	conns chan net.Conn
+
+	maxCap           int
+	cond             *sync.Cond
+	aliveConnections int32
 
 	// net.Conn generator
 	factory Factory
@@ -33,6 +38,8 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
 
 	c := &channelPool{
 		conns:   make(chan net.Conn, maxCap),
+		cond:    sync.NewCond(&sync.Mutex{}),
+		maxCap:  maxCap,
 		factory: factory,
 	}
 
@@ -42,8 +49,10 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
 		conn, err := factory()
 		if err != nil {
 			c.Close()
-			return nil, fmt.Errorf("factory is not able to fill the pool: %s", err)
+			return nil, fmt.Errorf("factory is not able to fill the pool: %w", err)
 		}
+
+		atomic.AddInt32(&c.aliveConnections, 1)
 		c.conns <- conn
 	}
 
@@ -56,6 +65,23 @@ func (c *channelPool) getConnsAndFactory() (chan net.Conn, Factory) {
 	factory := c.factory
 	c.mu.RUnlock()
 	return conns, factory
+}
+
+func (c *channelPool) makeNewConn(factory Factory) (net.Conn, error) {
+	c.cond.L.Lock()
+	defer c.cond.L.Unlock()
+
+	for atomic.LoadInt32(&c.aliveConnections) >= int32(c.maxCap) {
+		c.cond.Wait()
+	}
+
+	conn, err := factory()
+	if err != nil {
+		return nil, err
+	}
+
+	atomic.AddInt32(&c.aliveConnections, 1)
+	return c.wrapConn(conn), nil
 }
 
 // Get implements the Pool interfaces Get() method. If there is no new
@@ -77,12 +103,7 @@ func (c *channelPool) Get() (net.Conn, error) {
 
 		return c.wrapConn(conn), nil
 	default:
-		conn, err := factory()
-		if err != nil {
-			return nil, err
-		}
-
-		return c.wrapConn(conn), nil
+		return c.makeNewConn(factory)
 	}
 }
 
@@ -105,8 +126,15 @@ func (c *channelPool) put(conn net.Conn) error {
 	// block and the default case will be executed.
 	select {
 	case c.conns <- conn:
+		c.cond.L.Lock()
+		if atomic.LoadInt32(&c.aliveConnections) < int32(c.maxCap) {
+			c.cond.Signal()
+		}
+		c.cond.L.Unlock()
+
 		return nil
 	default:
+		atomic.AddInt32(&c.aliveConnections, -1)
 		// pool is full, close passed connection
 		return conn.Close()
 	}
@@ -132,4 +160,8 @@ func (c *channelPool) Close() {
 func (c *channelPool) Len() int {
 	conns, _ := c.getConnsAndFactory()
 	return len(conns)
+}
+
+func (c *channelPool) NumberOfConns() int {
+	return int(atomic.LoadInt32(&c.aliveConnections))
 }
