@@ -1,3 +1,3 @@
-module github.com/buraksezer/pool
+module github.com/buraksezer/connpool
 
 go 1.13
