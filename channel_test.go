@@ -1,4 +1,4 @@
-package pool
+package connpool
 
 import (
 	"log"

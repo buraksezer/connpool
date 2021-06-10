@@ -1,7 +1,7 @@
-# Pool [![Go Reference](https://pkg.go.dev/badge/github.com/buraksezer/pool.svg)](https://pkg.go.dev/github.com/buraksezer/pool) ![Tests](https://github.com/buraksezer/pool/actions/workflows/ci.yaml/badge.svg)
+# ConnPool [![Go Reference](https://pkg.go.dev/badge/github.com/buraksezer/connpool.svg)](https://pkg.go.dev/github.com/buraksezer/connpool) ![Tests](https://github.com/buraksezer/connpool/actions/workflows/ci.yaml/badge.svg)
 
 
-Pool is a thread safe connection pool for net.Conn interface. It can be used to
+ConnPool is a thread safe connection pool for net.Conn interface. It can be used to
 manage and reuse connections.
 
 
@@ -10,7 +10,7 @@ manage and reuse connections.
 Install the package with:
 
 ```bash
-go get github.com/buraksezer/pool
+go get github.com/buraksezer/connpool
 ```
 
 Please vendor the package with one of the releases: https://github.com/buraksezer/pool/releases.

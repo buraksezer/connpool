@@ -1,5 +1,5 @@
 // Package pool implements a pool of net.Conn interfaces to manage and reuse them.
-package pool
+package connpool
 
 import (
 	"errors"
