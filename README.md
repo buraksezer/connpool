@@ -4,6 +4,13 @@
 ConnPool is a thread safe connection pool for net.Conn interface. It can be used to
 manage and reuse connections.
 
+This package is a fork of [fatih/pool](https://github.com/fatih/pool). ConnPool is a vital 
+part of [buraksezer/olric](https://github.com/buraksezer/olric). So I need to maintain it myself.
+
+Fixed bugs:
+
+* https://github.com/fatih/pool/issues/26
+* https://github.com/fatih/pool/issues/27
 
 ## Install and Usage
 
