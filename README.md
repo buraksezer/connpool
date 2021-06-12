@@ -4,6 +4,13 @@
 ConnPool is a thread safe connection pool for net.Conn interface. It can be used to
 manage and reuse connections.
 
+This package is a fork of [fatih/pool](https://github.com/fatih/pool). ConnPool is a vital 
+part of [buraksezer/olric](https://github.com/buraksezer/olric). So I need to maintain it myself.
+
+Fixed bugs:
+
+* https://github.com/fatih/pool/issues/26
+* https://github.com/fatih/pool/issues/27
 
 ## Install and Usage
 
@@ -12,10 +19,6 @@ Install the package with:
 ```bash
 go get github.com/buraksezer/connpool
 ```
-
-Please vendor the package with one of the releases: https://github.com/buraksezer/pool/releases.
-`master` branch is **development** branch and will always contain the latest changes.
-
 
 ## Example
 
@@ -26,7 +29,7 @@ factory := func() (net.Conn, error) { return net.Dial("tcp", "127.0.0.1:4000") }
 // create a new channel based pool with an initial capacity of 5 and maximum
 // capacity of 30. The factory will create 5 initial connections and put it
 // into the pool.
-p, err := pool.NewChannelPool(5, 30, factory)
+p, err := connpool.NewChannelPool(5, 30, factory)
 
 // now you can get a connection from the pool, if there is no connection
 // available it will create a new one via the factory function.
@@ -39,7 +42,7 @@ conn.Close()
 
 // close the underlying connection instead of returning it to pool
 // it is useful when acceptor has already closed connection and conn.Write() returns error
-if pc, ok := conn.(*pool.PoolConn); ok {
+if pc, ok := conn.(*connpool.PoolConn); ok {
   pc.MarkUnusable()
   pc.Close()
 }
