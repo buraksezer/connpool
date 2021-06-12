@@ -1,6 +1,8 @@
 package connpool
 
 import (
+	"context"
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -32,11 +34,12 @@ func TestNew(t *testing.T) {
 		t.Errorf("New error: %s", err)
 	}
 }
+
 func TestPool_Get_Impl(t *testing.T) {
 	p, _ := newChannelPool()
 	defer p.Close()
 
-	conn, err := p.Get()
+	conn, err := p.Get(context.Background())
 	if err != nil {
 		t.Errorf("Get error: %s", err)
 	}
@@ -51,7 +54,7 @@ func TestPool_Get(t *testing.T) {
 	p, _ := newChannelPool()
 	defer p.Close()
 
-	_, err := p.Get()
+	_, err := p.Get(context.Background())
 	if err != nil {
 		t.Errorf("Get error: %s", err)
 	}
@@ -68,7 +71,7 @@ func TestPool_Get(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := p.Get()
+			_, err := p.Get(context.Background())
 			if err != nil {
 				t.Errorf("Get error: %s", err)
 			}
@@ -81,7 +84,7 @@ func TestPool_Get(t *testing.T) {
 			(InitialCap - 1), p.Len())
 	}
 
-	_, err = p.Get()
+	_, err = p.Get(context.Background())
 	if err != nil {
 		t.Errorf("Get error: %s", err)
 	}
@@ -97,7 +100,7 @@ func TestPool_Put(t *testing.T) {
 	// get/create from the pool
 	conns := make([]net.Conn, MaximumCap)
 	for i := 0; i < MaximumCap; i++ {
-		conn, _ := p.Get()
+		conn, _ := p.Get(context.Background())
 		conns[i] = conn
 	}
 
@@ -111,7 +114,7 @@ func TestPool_Put(t *testing.T) {
 			1, p.Len())
 	}
 
-	conn, _ := p.Get()
+	conn, _ := p.Get(context.Background())
 	p.Close() // close pool
 
 	conn.Close() // try to put into a full pool
@@ -125,17 +128,17 @@ func TestPool_PutUnusableConn(t *testing.T) {
 	defer p.Close()
 
 	// ensure pool is not empty
-	conn, _ := p.Get()
+	conn, _ := p.Get(context.Background())
 	conn.Close()
 
 	poolSize := p.Len()
-	conn, _ = p.Get()
+	conn, _ = p.Get(context.Background())
 	conn.Close()
 	if p.Len() != poolSize {
 		t.Errorf("Pool size is expected to be equal to initial size")
 	}
 
-	conn, _ = p.Get()
+	conn, _ = p.Get(context.Background())
 	if pc, ok := conn.(*PoolConn); !ok {
 		t.Errorf("impossible")
 	} else {
@@ -173,7 +176,7 @@ func TestPool_Close(t *testing.T) {
 		t.Errorf("Close error, factory should be nil")
 	}
 
-	_, err := p.Get()
+	_, err := p.Get(context.Background())
 	if err == nil {
 		t.Errorf("Close error, get conn should return an error")
 	}
@@ -193,7 +196,7 @@ func TestPoolConcurrent(t *testing.T) {
 
 	for i := 0; i < MaximumCap; i++ {
 		go func() {
-			conn, _ := p.Get()
+			conn, _ := p.Get(context.Background())
 
 			pipe <- conn
 		}()
@@ -211,7 +214,7 @@ func TestPoolConcurrent(t *testing.T) {
 func TestPoolWriteRead(t *testing.T) {
 	p, _ := NewChannelPool(0, 30, factory)
 
-	conn, _ := p.Get()
+	conn, _ := p.Get(context.Background())
 
 	msg := "hello"
 	_, err := conn.Write([]byte(msg))
@@ -229,7 +232,7 @@ func TestPoolConcurrent2(t *testing.T) {
 		for i := 0; i < 10; i++ {
 			wg.Add(1)
 			go func(i int) {
-				conn, _ := p.Get()
+				conn, _ := p.Get(context.Background())
 				time.Sleep(time.Millisecond * time.Duration(rand.Intn(100)))
 				conn.Close()
 				wg.Done()
@@ -240,7 +243,7 @@ func TestPoolConcurrent2(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(i int) {
-			conn, _ := p.Get()
+			conn, _ := p.Get(context.Background())
 			time.Sleep(time.Millisecond * time.Duration(rand.Intn(100)))
 			conn.Close()
 			wg.Done()
@@ -261,7 +264,7 @@ func TestPoolConcurrent3(t *testing.T) {
 		wg.Done()
 	}()
 
-	if conn, err := p.Get(); err == nil {
+	if conn, err := p.Get(context.Background()); err == nil {
 		conn.Close()
 	}
 
@@ -299,18 +302,25 @@ func TestPoolMaximumCapacity(t *testing.T) {
 	})
 	defer p.Close()
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	var wg sync.WaitGroup
 	numWorkers := MaximumCap * 2
-	wg.Add(numWorkers)
 	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
 			done := make(chan struct{})
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				defer close(done)
 
-				_, err := p.Get()
+				_, err := p.Get(ctx)
 				if err != nil {
-					t.Error(err)
+					fmt.Println(err)
+					return
 				}
 				atomic.AddInt32(&successful, 1)
 			}()
@@ -319,9 +329,9 @@ func TestPoolMaximumCapacity(t *testing.T) {
 			case <-time.After(time.Second):
 			case <-done:
 			}
-			wg.Done()
 		}()
 	}
+	cancel()
 	wg.Wait()
 
 	if atomic.LoadInt32(&successful) != int32(MaximumCap) {
@@ -340,16 +350,21 @@ func TestPoolMaximumCapacity_Close(t *testing.T) {
 	})
 	defer p.Close()
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	var wg sync.WaitGroup
 	numWorkers := MaximumCap * 2
 	wg.Add(numWorkers)
 	for i := 0; i < numWorkers; i++ {
 		go func() {
 			done := make(chan struct{})
+
+			wg.Add(1)
 			go func() {
+				defer wg.Done()
 				defer close(done)
 
-				c, err := p.Get()
+				c, err := p.Get(ctx)
 				if err != nil {
 					t.Error(err)
 				}
@@ -364,10 +379,27 @@ func TestPoolMaximumCapacity_Close(t *testing.T) {
 			wg.Done()
 		}()
 	}
+	cancel()
 	wg.Wait()
 
 	if atomic.LoadInt32(&successfull) != int32(numWorkers) {
 		t.Errorf("expected successful Get calls: %d, got: %d",
 			numWorkers, atomic.LoadInt32(&successfull))
 	}
+}
+
+func TestPool_Get1(t *testing.T) {
+	p, _ := NewChannelPool(0, 1, factory)
+	defer p.Close()
+	var wg sync.WaitGroup
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			defer wg.Done()
+			conn, _ := p.Get(context.Background())
+			defer conn.Close()
+			time.Sleep(time.Millisecond * 100)
+		}()
+	}
+	wg.Wait()
 }

@@ -1,11 +1,11 @@
 package connpool
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
 	"sync"
-	"sync/atomic"
 )
 
 // channelPool implements the Pool interface based on buffered channels.
@@ -14,9 +14,8 @@ type channelPool struct {
 	mu    sync.RWMutex
 	conns chan net.Conn
 
-	maxCap           int
-	cond             *sync.Cond
-	aliveConnections int32
+	maxCap    int
+	semaphore chan struct{}
 
 	// net.Conn generator
 	factory Factory
@@ -37,22 +36,22 @@ func NewChannelPool(initialCap, maxCap int, factory Factory) (Pool, error) {
 	}
 
 	c := &channelPool{
-		conns:   make(chan net.Conn, maxCap),
-		cond:    sync.NewCond(&sync.Mutex{}),
-		maxCap:  maxCap,
-		factory: factory,
+		conns:     make(chan net.Conn, maxCap),
+		semaphore: make(chan struct{}, maxCap),
+		maxCap:    maxCap,
+		factory:   factory,
 	}
 
 	// create initial connections, if something goes wrong,
 	// just close the pool error out.
 	for i := 0; i < initialCap; i++ {
+		c.semaphore <- struct{}{}
 		conn, err := factory()
 		if err != nil {
 			c.Close()
 			return nil, fmt.Errorf("factory is not able to fill the pool: %w", err)
 		}
 
-		atomic.AddInt32(&c.aliveConnections, 1)
 		c.conns <- conn
 	}
 
@@ -67,27 +66,10 @@ func (c *channelPool) getConnsAndFactory() (chan net.Conn, Factory) {
 	return conns, factory
 }
 
-func (c *channelPool) makeNewConn(factory Factory) (net.Conn, error) {
-	c.cond.L.Lock()
-	defer c.cond.L.Unlock()
-
-	for atomic.LoadInt32(&c.aliveConnections) >= int32(c.maxCap) {
-		c.cond.Wait()
-	}
-
-	conn, err := factory()
-	if err != nil {
-		return nil, err
-	}
-
-	atomic.AddInt32(&c.aliveConnections, 1)
-	return c.wrapConn(conn), nil
-}
-
 // Get implements the Pool interfaces Get() method. If there is no new
 // connection available in the pool, a new connection will be created via the
 // Factory() method.
-func (c *channelPool) Get() (net.Conn, error) {
+func (c *channelPool) Get(ctx context.Context) (net.Conn, error) {
 	conns, factory := c.getConnsAndFactory()
 	if conns == nil {
 		return nil, ErrClosed
@@ -103,7 +85,24 @@ func (c *channelPool) Get() (net.Conn, error) {
 
 		return c.wrapConn(conn), nil
 	default:
-		return c.makeNewConn(factory)
+	}
+
+	select {
+	case c.semaphore <- struct{}{}:
+		conn, err := factory()
+		if err != nil {
+			return nil, err
+		}
+
+		return c.wrapConn(conn), nil
+	case conn := <-conns:
+		if conn == nil {
+			return nil, ErrClosed
+		}
+
+		return c.wrapConn(conn), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 
@@ -126,15 +125,9 @@ func (c *channelPool) put(conn net.Conn) error {
 	// block and the default case will be executed.
 	select {
 	case c.conns <- conn:
-		c.cond.L.Lock()
-		if atomic.LoadInt32(&c.aliveConnections) < int32(c.maxCap) {
-			c.cond.Signal()
-		}
-		c.cond.L.Unlock()
-
 		return nil
 	default:
-		atomic.AddInt32(&c.aliveConnections, -1)
+		<-c.semaphore
 		// pool is full, close passed connection
 		return conn.Close()
 	}
@@ -163,5 +156,5 @@ func (c *channelPool) Len() int {
 }
 
 func (c *channelPool) NumberOfConns() int {
-	return int(atomic.LoadInt32(&c.aliveConnections))
+	return len(c.semaphore)
 }
