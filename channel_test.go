@@ -2,7 +2,7 @@ package connpool
 
 import (
 	"context"
-	"fmt"
+	"errors"
 	"log"
 	"math/rand"
 	"net"
@@ -81,7 +81,7 @@ func TestPool_Get(t *testing.T) {
 
 	if p.Len() != 0 {
 		t.Errorf("Get error. Expecting %d, got %d",
-			(InitialCap - 1), p.Len())
+			InitialCap-1, p.Len())
 	}
 
 	_, err = p.Get(context.Background())
@@ -188,7 +188,7 @@ func TestPool_Close(t *testing.T) {
 
 func TestPoolConcurrent(t *testing.T) {
 	p, _ := newChannelPool()
-	pipe := make(chan net.Conn, 0)
+	pipe := make(chan net.Conn)
 
 	go func() {
 		p.Close()
@@ -285,7 +285,7 @@ func simpleTCPServer() {
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			log.Fatal(err)
+			panic(err)
 		}
 
 		go func() {
@@ -302,8 +302,6 @@ func TestPoolMaximumCapacity(t *testing.T) {
 	})
 	defer p.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	var wg sync.WaitGroup
 	numWorkers := MaximumCap * 2
 	for i := 0; i < numWorkers; i++ {
@@ -311,27 +309,21 @@ func TestPoolMaximumCapacity(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			done := make(chan struct{})
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer close(done)
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
+			defer cancel()
 
-				_, err := p.Get(ctx)
-				if err != nil {
-					fmt.Println(err)
+			_, err := p.Get(ctx)
+			if err != nil {
+				if errors.Is(err, context.DeadlineExceeded) {
 					return
 				}
-				atomic.AddInt32(&successful, 1)
-			}()
-
-			select {
-			case <-time.After(time.Second):
-			case <-done:
+				t.Errorf("expected nil, got: %v", err)
+				return
 			}
+			atomic.AddInt32(&successful, 1)
 		}()
 	}
-	cancel()
+
 	wg.Wait()
 
 	if atomic.LoadInt32(&successful) != int32(MaximumCap) {
@@ -344,60 +336,58 @@ func TestPoolMaximumCapacity(t *testing.T) {
 }
 
 func TestPoolMaximumCapacity_Close(t *testing.T) {
-	var successfull int32
+	var successful int32
 	p, _ := NewChannelPool(InitialCap, MaximumCap, func() (net.Conn, error) {
 		return net.Dial(network, address)
 	})
 	defer p.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	var wg sync.WaitGroup
 	numWorkers := MaximumCap * 2
-	wg.Add(numWorkers)
+
 	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
 		go func() {
-			done := make(chan struct{})
+			defer wg.Done()
 
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				defer close(done)
+			ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(time.Second))
+			defer cancel()
 
-				c, err := p.Get(ctx)
-				if err != nil {
-					t.Error(err)
+			c, err := p.Get(ctx)
+			if err != nil {
+				if errors.Is(err, context.DeadlineExceeded) {
+					return
 				}
-				atomic.AddInt32(&successfull, 1)
-				c.Close()
-			}()
-
-			select {
-			case <-time.After(time.Second):
-			case <-done:
+				t.Errorf("expected nil, got: %v", err)
+				return
 			}
-			wg.Done()
+
+			atomic.AddInt32(&successful, 1)
+			c.Close()
 		}()
 	}
-	cancel()
+
 	wg.Wait()
 
-	if atomic.LoadInt32(&successfull) != int32(numWorkers) {
+	if atomic.LoadInt32(&successful) != int32(numWorkers) {
 		t.Errorf("expected successful Get calls: %d, got: %d",
-			numWorkers, atomic.LoadInt32(&successfull))
+			numWorkers, atomic.LoadInt32(&successful))
 	}
 }
 
 func TestPool_Get1(t *testing.T) {
 	p, _ := NewChannelPool(0, 1, factory)
 	defer p.Close()
+
 	var wg sync.WaitGroup
-	wg.Add(2)
 	for i := 0; i < 2; i++ {
+		wg.Add(1)
 		go func() {
 			defer wg.Done()
+
 			conn, _ := p.Get(context.Background())
 			defer conn.Close()
+
 			time.Sleep(time.Millisecond * 100)
 		}()
 	}
