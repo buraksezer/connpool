@@ -393,3 +393,22 @@ func TestPool_Get1(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestPool_ClosedConnectionsReplaced(t *testing.T) {
+	p, _ := NewChannelPool(1, 1, factory)
+	defer p.Close()
+
+	conn, _ := p.Get(context.Background())
+
+	conn.(*PoolConn).MarkUnusable()
+	conn.Close()
+
+	ctx, _ := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	conn, err := p.Get(ctx)
+	if err != nil {
+		t.Errorf("expected nil, got: %v", err)
+	}
+	if conn == nil {
+		t.Errorf("expected non-nil conn")
+	}
+}
