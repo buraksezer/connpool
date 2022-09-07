@@ -412,3 +412,32 @@ func TestPool_ClosedConnectionsReplaced(t *testing.T) {
 		t.Errorf("expected non-nil conn")
 	}
 }
+
+func TestPool_FailedFactoryRestoresConnectionSlot(t *testing.T) {
+	// regression test to ensure failed factory doesn't permanently decrease connection max
+	// this happened previously due to semaphore not being released when factory failed
+	factory := func() (net.Conn, error) {
+		// a dial guaranteed to fail
+		return net.DialTimeout("tcp", "localhost:1234", time.Millisecond)
+	}
+
+	max := 2
+	pool, err := NewChannelPool(0, max, factory)
+	if err != nil {
+		t.Fatalf("error creating pool: %v", err)
+	}
+
+	for i := 0; i < max+1; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond)
+		defer cancel()
+
+		conn, err := pool.Get(ctx)
+		if err == nil && conn != nil {
+			conn.Close()
+		}
+	}
+
+	if len(pool.(*channelPool).semaphore) != 0 {
+		t.Fatal("max connections decreased")
+	}
+}
